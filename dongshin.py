@@ -375,6 +375,40 @@ def parse_admission_excel(uploaded_file):
     return df, debug_info
 
 
+def compute_auto_margin(rate, add):
+    """
+    사용자가 직접 조절하지 않아도, 학과의 충원율(우선) 또는 경쟁률을 보고
+    70%cut에 적용할 여유값(margin)을 0.01 ~ 0.20 등급 사이에서 자동으로 정한다.
+
+    - 충원율이 높을수록(=예비순번이 많이 돌수록) 70%cut보다 실제 마지막 합격선이
+      훨씬 더 낮은(등급 숫자가 큰) 경우가 많으므로 여유값을 크게 준다.
+    - 충원율 정보가 없으면 경쟁률로 대신 추정한다(경쟁률이 높을수록 여유값을 크게 줌).
+    - 둘 다 없으면 중간값(0.10)을 사용한다.
+
+    반환값: (margin, 계산에 사용한 근거 설명 문자열)
+    """
+    MIN_MARGIN, MAX_MARGIN = 0.01, 0.20
+
+    def clamp(value):
+        return max(MIN_MARGIN, min(MAX_MARGIN, value))
+
+    if pd.notna(add):
+        # 충원율 0% -> 0.01, 100% -> 약 0.11, 200% 이상 -> 0.20으로 선형 매핑
+        margin = clamp(MIN_MARGIN + (add / 200.0) * (MAX_MARGIN - MIN_MARGIN))
+        reason = f"충원율 {add}% 기준"
+        return round(margin, 2), reason
+
+    if pd.notna(rate):
+        # 경쟁률 3:1 이하 -> 0.01, 20:1 이상 -> 0.20으로 선형 매핑
+        ratio = (rate - 3.0) / (20.0 - 3.0)
+        ratio = max(0.0, min(1.0, ratio))
+        margin = clamp(MIN_MARGIN + ratio * (MAX_MARGIN - MIN_MARGIN))
+        reason = f"충원율 정보가 없어 경쟁률 {rate}:1 기준으로 추정"
+        return round(margin, 2), reason
+
+    return 0.10, "충원율/경쟁률 정보가 모두 없어 기본값 사용"
+
+
 # =========================================================================
 # 7. Streamlit 앱
 # =========================================================================
@@ -478,19 +512,6 @@ if uploaded_file is not None:
         key="my_grade",
     )
 
-    # 70%cut을 곧바로 "여기 넘으면 무조건 낮음"으로 딱 자르지 않고,
-    # cut보다 조금 더 안 좋은 등급까지는 "보통"으로 봐줄 여유 구간을 사용자가 직접 조절할 수 있게 한다.
-    grade_buffer = st.slider(
-        "최종합격등급(70%cut) 여유 폭",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.3,
-        step=0.1,
-        on_change=reset_analysis,
-        key="grade_buffer",
-        help="70%cut보다 등급이 이 값만큼 더 낮아도(안 좋아도) '보통'으로 판단합니다.",
-    )
-
     if st.button("합격 가능성 분석"):
         matched = filtered_df[filtered_df["학과"] == department]
 
@@ -510,6 +531,8 @@ if uploaded_file is not None:
             st.error("선택하신 학과의 등급 데이터(평균등급 또는 최종합격등급)가 유실되어 분석할 수 없습니다.")
             st.session_state.analyzed = False
         else:
+            grade_buffer, margin_reason = compute_auto_margin(rate, add)
+
             if my_grade <= avg:
                 result = "🟢 매우 높음"
                 comment = "평균 합격등급보다 우수합니다. 안정적인 지원이 가능합니다."
@@ -539,6 +562,7 @@ if uploaded_file is not None:
                 "avg": avg,
                 "final": final,
                 "grade_buffer": grade_buffer,
+                "margin_reason": margin_reason,
                 "my_grade": my_grade,
                 "avg_gap_text": avg_gap_text,
                 "final_gap_text": final_gap_text,
@@ -565,7 +589,10 @@ if uploaded_file is not None:
             st.write(f"평균 합격등급 : **{res['avg']}** ({res['avg_gap_text']})")
             st.write(f"최종 합격등급(70%cut) : **{res['final']}** ({res['final_gap_text']})")
             if res["grade_buffer"] > 0:
-                st.caption(f"여유 폭 {res['grade_buffer']}등급 적용 → 실질 기준선 {round(res['final'] + res['grade_buffer'], 2)}")
+                st.caption(
+                    f"여유 폭 {res['grade_buffer']}등급 자동 적용({res['margin_reason']}) "
+                    f"→ 실질 기준선 {round(res['final'] + res['grade_buffer'], 2)}"
+                )
 
         with col2:
             st.subheader("📈 학과 입시 지표")
@@ -579,4 +606,4 @@ if uploaded_file is not None:
         if pd.notna(res["add"]) and res["add"] >= 100:
             st.success("💡 이 학과는 전년도 충원율이 100% 이상으로, 한 바퀴 이상 예비번호가 돌았습니다. 추가합격 변수를 긍정적으로 고려해보세요.")
 
-        st.caption("⚠️ 본 분석은 전년도 데이터를 기반으로 한 참고용 정보이며, 실제 당해 년도 수험생 지원 성향 및 모집 인원에 따라 결과가 달라질 수 있습니다.")
+        st.caption("⚠️ 본 분석은 전년도 데이터를 기반으로 한 참고용 정보이며, 실제 당해 년도 수험생 지원 성향 및 모집 인원과 같은 여러 요인에 따라 결과가 달라질 수 있습니다.")
