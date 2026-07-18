@@ -414,7 +414,7 @@ def compute_auto_margin(rate, add):
 # =========================================================================
 st.set_page_config(page_title="AI 대학 합격 가능성 분석기", layout="centered")
 st.title("🎓 AI 대학 합격 가능성 분석기")
-st.caption("제목이 여러 줄이거나 병합 셀·멀티 헤더가 있는 대학 공식 입시결과 엑셀도 자동으로 인식합니다.")
+st.caption("일부 대학 자료가 인식되지 않을 수 있습니다.")
 
 # 세션 상태 초기화 (분석 결과를 화면 갱신 후에도 유지하기 위함)
 if "analyzed" not in st.session_state:
